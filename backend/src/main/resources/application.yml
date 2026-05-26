@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: upsglam-backend
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    pool:
+      initial-size: 2
+      max-size: 10
+
+server:
+  port: 8080
+
+supabase:
+  url: ${SUPABASE_URL}
+  anon-key: ${SUPABASE_ANON_KEY}
+  service-role-key: ${SUPABASE_SERVICE_ROLE_KEY}
+  jwks-url: ${SUPABASE_JWKS_URL}
+
+cuda-service:
+  base-url: ${CUDA_SERVICE_URL:http://cuda-service:8000}
+
+logging:
+  level:
+    com.ups.glam: DEBUG
+    org.springframework.security: DEBUG
