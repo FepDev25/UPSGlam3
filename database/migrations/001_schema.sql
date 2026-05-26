@@ -52,13 +52,15 @@ CREATE TABLE IF NOT EXISTS filters (
 );
 
 -- Insertamos los 6 filtros que implementarás en CUDA
+-- Filtros de Práctica 2 (3): laplaciano, sobel, media
+-- Filtros nuevos      (3): grayscale, emboss, ups_frame
 INSERT INTO filters (name, display_name, description, icon_name) VALUES
-    ('laplaciano',    'Laplaciano',         'Resalta bordes y detalles finos detectando cambios bruscos de intensidad',      'vector-triangle'),
-    ('sobel',         'Detección de Bordes','Resalta los bordes de la imagen usando el operador Sobel extendido',             'scan'),
-    ('media',         'Suavizado de Media', 'Suaviza la imagen promediando los píxeles vecinos en una ventana NxN',          'blur_on'),
-    ('grayscale',     'Escala de Grises',   'Convierte la imagen a blanco y negro usando pesos perceptuales RGB',            'contrast'),
-    ('emboss',        'Relieve',            'Efecto artístico 3D que simula relieve usando un kernel diagonal de convolución','badge-3d'),
-    ('ups_frame',     'Marco UPS',          'Agrega un marco con los colores y logo institucional de la UPS Don Bosco',      'school');
+    ('laplaciano', 'Laplaciano',         'Resalta bordes y detalles finos detectando cambios bruscos de intensidad',              'vector-triangle'),
+    ('sobel',      'Detección de Bordes','Resalta los bordes de la imagen usando el operador Sobel en dos direcciones',           'scan'),
+    ('media',      'Suavizado de Media', 'Suaviza la imagen promediando los píxeles vecinos en una ventana 3x3',                  'blur_on'),
+    ('grayscale',  'Escala de Grises',   'Convierte la imagen a blanco y negro usando pesos perceptuales de luminancia RGB',       'contrast'),
+    ('emboss',     'Relieve',            'Efecto artístico 3D que simula relieve usando un kernel diagonal de convolución',        'badge-3d'),
+    ('ups_frame',  'Marco UPS',          'Marco institucional UPS: banda azul #123672 (superior) y dorada #F7BF1A (inferior) con logo de la Universidad Politécnica Salesiana', 'school');
 
 -- TABLA 3: posts, son cada publicación que hace un usuario en la red social
 -- Se relacionan: 
@@ -121,7 +123,8 @@ CREATE TABLE IF NOT EXISTS processing_history (
     original_image_url  TEXT NOT NULL,
     processed_image_url TEXT,
 
-    status              VARCHAR(20) DEFAULT 'pending',
+    status              VARCHAR(20) DEFAULT 'pending'
+                            CHECK (status IN ('pending','processing','completed','failed')),
     error_message       TEXT,
     created_at          TIMESTAMPTZ DEFAULT NOW(),
     updated_at          TIMESTAMPTZ DEFAULT NOW()
@@ -156,7 +159,8 @@ CREATE TABLE IF NOT EXISTS gpu_metrics (
     compute_capability  VARCHAR(10) DEFAULT '12.0',
 
 
-    status              VARCHAR(20) DEFAULT 'success',
+    status              VARCHAR(20) DEFAULT 'success'
+                            CHECK (status IN ('success','error')),
 
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
@@ -264,33 +268,114 @@ CREATE POLICY "Solo el dueño ve sus métricas GPU"
 CREATE POLICY "El servicio GPU puede insertar métricas"
     ON gpu_metrics FOR INSERT WITH CHECK (true);
 
--- TRIGGER — Crear perfil automáticamente al registrarse, sirve para cuando alguien se registra en Supabase Auth, se crea
--- una fila en auth.users. Queremos que AUTOMÁTICAMENTE también
--- se cree una fila en nuestra tabla profiles.
+-- TRIGGER 1 — Crear perfil automáticamente al registrarse
+-- Cuando alguien se registra en Supabase Auth se crea una fila en auth.users.
+-- Este trigger crea automáticamente la fila en profiles.
+-- SPLIT_PART(email,'@',1) toma la parte antes del @ como username inicial.
+-- Si dos usuarios tienen el mismo prefijo de email, se añade un sufijo único.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+    base_username TEXT;
+    final_username TEXT;
+    counter        INTEGER := 0;
 BEGIN
+    base_username := SPLIT_PART(NEW.email, '@', 1);
+    final_username := base_username;
+
+    -- Evitar colisión de username si ya existe ese prefijo
+    WHILE EXISTS (SELECT 1 FROM public.profiles WHERE username = final_username) LOOP
+        counter := counter + 1;
+        final_username := base_username || counter::TEXT;
+    END LOOP;
+
     INSERT INTO public.profiles (id, username, full_name, avatar_url)
     VALUES (
         NEW.id,
-        -- Username: tomamos la parte antes del @ del email
-        
-        SPLIT_PART(NEW.email, '@', 1),
-        -- Full name: del metadata del registro (si el usuario lo proporcionó)
+        final_username,
         NEW.raw_user_meta_data->>'full_name',
-        -- Avatar: del proveedor OAuth si usaron Google/GitHub (opcional)
         NEW.raw_user_meta_data->>'avatar_url'
     );
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Activamos el trigger: cada vez que se inserta en auth.users, llama a la función
 CREATE OR REPLACE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+
+-- TRIGGER 2 — Mantener likes_count sincronizado en posts
+-- Sin este trigger likes_count siempre sería 0 aunque haya likes reales.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION sync_likes_count()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE posts SET likes_count = likes_count + 1 WHERE id = NEW.post_id;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE posts SET likes_count = GREATEST(likes_count - 1, 0) WHERE id = OLD.post_id;
+        RETURN OLD;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER on_like_change
+    AFTER INSERT OR DELETE ON likes
+    FOR EACH ROW EXECUTE FUNCTION sync_likes_count();
+
+-- TRIGGER 3 — Mantener comments_count sincronizado en posts
+-- Mismo problema que likes_count: sin trigger el contador no se mueve.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION sync_comments_count()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE posts SET comments_count = comments_count + 1 WHERE id = NEW.post_id;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE posts SET comments_count = GREATEST(comments_count - 1, 0) WHERE id = OLD.post_id;
+        RETURN OLD;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER on_comment_change
+    AFTER INSERT OR DELETE ON comments
+    FOR EACH ROW EXECUTE FUNCTION sync_comments_count();
+
+-- TRIGGER 4 — Actualizar updated_at automáticamente
+-- Las columnas updated_at solo tienen DEFAULT NOW() (valor al crear).
+-- Sin este trigger nunca cambiarían al editar un registro.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_profiles_updated_at
+    BEFORE UPDATE ON profiles
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE TRIGGER trg_posts_updated_at
+    BEFORE UPDATE ON posts
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE TRIGGER trg_comments_updated_at
+    BEFORE UPDATE ON comments
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE OR REPLACE TRIGGER trg_processing_updated_at
+    BEFORE UPDATE ON processing_history
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 
 -- FIN DEL ESQUEMA
