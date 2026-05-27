@@ -6,6 +6,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 
 @Configuration
@@ -16,7 +19,14 @@ public class SecurityConfig {
     private String jwksUrl;
 
     @Bean
-    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+    public ReactiveJwtDecoder jwtDecoder() {
+        return NimbusReactiveJwtDecoder.withJwkSetUri(jwksUrl)
+                .jwsAlgorithm(SignatureAlgorithm.ES256)
+                .build();
+    }
+
+    @Bean
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http, ReactiveJwtDecoder jwtDecoder) {
         return http
             .csrf(ServerHttpSecurity.CsrfSpec::disable)
             .authorizeExchange(exchanges -> exchanges
@@ -32,7 +42,7 @@ public class SecurityConfig {
                 .anyExchange().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2
-                .jwt(jwt -> jwt.jwkSetUri(jwksUrl))
+                .jwt(jwt -> jwt.jwtDecoder(jwtDecoder))
             )
             .build();
     }
