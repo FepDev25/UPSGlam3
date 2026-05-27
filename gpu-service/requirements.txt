@@ -4,3 +4,4 @@ pycuda
 numpy
 pillow
 python-multipart
+httpx
