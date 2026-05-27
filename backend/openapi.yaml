@@ -1,0 +1,805 @@
+openapi: 3.0.3
+info:
+  title: UPSGlam API
+  description: |
+    Backend reactivo de UPSGlam 3.0 — red social de imágenes procesadas con GPU (CUDA/PyCUDA).
+    Construido con Spring WebFlux. Autenticación vía Supabase Auth (JWT ES256).
+
+    **Convenciones:**
+    - Todos los campos JSON usan `snake_case`.
+    - Campos con valor `null` no aparecen en la respuesta.
+    - El `user_id` nunca va en el body — el backend lo extrae del JWT.
+    - Timestamps en ISO 8601 UTC.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local
+  - url: http://cuda-service:8080/api/v1
+    description: Docker Compose
+
+security: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT obtenido desde Supabase Auth (`access_token`).
+
+  schemas:
+
+    ProfileResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        full_name:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, username, created_at]
+      example:
+        id: 8bc3410a-44ce-4335-91df-0ec7f9f40319
+        username: lamediatricolor
+        full_name: Felipe
+        bio: Computación Paralela UPS
+        created_at: "2026-05-26T21:44:43.292627Z"
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        bio:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+      example:
+        full_name: Felipe
+        bio: Computación Paralela UPS
+
+    FilterResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+        icon_name:
+          type: string
+        is_active:
+          type: boolean
+      required: [id, name, display_name, description, icon_name, is_active]
+
+    AuthorInfo:
+      type: object
+      properties:
+        username:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+      required: [username]
+
+    PostResponse:
+      type: object
+      description: |
+        Representa un post publicado. `filter_id` es el UUID del filtro aplicado;
+        cruzar con `GET /filters` para obtener el nombre para mostrar.
+        `is_published` es siempre `true` en el feed (los pendientes/fallidos no aparecen).
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        filter_id:
+          type: string
+          format: uuid
+        caption:
+          type: string
+          nullable: true
+        original_image_url:
+          type: string
+          format: uri
+        processed_image_url:
+          type: string
+          format: uri
+        likes_count:
+          type: integer
+        comments_count:
+          type: integer
+        is_published:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        author:
+          $ref: '#/components/schemas/AuthorInfo'
+      required: [id, user_id, filter_id, original_image_url, processed_image_url, likes_count, comments_count, is_published, created_at, author]
+
+    CreatePostRequest:
+      type: object
+      properties:
+        original_image_url:
+          type: string
+          format: uri
+          description: URL pública de una imagen ya subida al bucket `original-images` de Supabase Storage.
+        filter_id:
+          type: string
+          format: uuid
+        caption:
+          type: string
+          nullable: true
+      required: [original_image_url, filter_id]
+      example:
+        original_image_url: "https://scoxgmhyhqldkditowkb.supabase.co/storage/v1/object/public/original-images/foto.jpg"
+        filter_id: e68f5947-7ada-4d88-aa6f-7e5c60bbe09b
+        caption: Mi primer post
+
+    CommentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        post_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        author:
+          $ref: '#/components/schemas/AuthorInfo'
+      required: [id, post_id, user_id, content, created_at, author]
+
+    CreateCommentRequest:
+      type: object
+      properties:
+        content:
+          type: string
+      required: [content]
+      example:
+        content: Muy buena foto!
+
+    LikedResponse:
+      type: object
+      properties:
+        liked:
+          type: boolean
+      required: [liked]
+      example:
+        liked: true
+
+    GpuMetricsResponse:
+      type: object
+      properties:
+        filter_name:
+          type: string
+        image_width:
+          type: integer
+        image_height:
+          type: integer
+        block_dim_x:
+          type: integer
+        block_dim_y:
+          type: integer
+        grid_dim_x:
+          type: integer
+        grid_dim_y:
+          type: integer
+        total_threads:
+          type: integer
+        kernel_time_ms:
+          type: number
+          format: double
+        total_time_ms:
+          type: number
+          format: double
+        memory_transferred_mb:
+          type: number
+          format: double
+        cuda_version:
+          type: string
+          nullable: true
+
+    ProcessingHistoryResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filter_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, completed, failed]
+        original_image_url:
+          type: string
+          format: uri
+        processed_image_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, filter_id, status, original_image_url, created_at]
+
+    ProcessingDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filter_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, completed, failed]
+        original_image_url:
+          type: string
+          format: uri
+        processed_image_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        gpu_metrics:
+          $ref: '#/components/schemas/GpuMetricsResponse'
+          nullable: true
+          description: Null si el status es `pending`.
+      required: [id, filter_id, status, original_image_url, created_at]
+
+    PagedPostResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostResponse'
+        page:
+          type: integer
+        size:
+          type: integer
+        total:
+          type: integer
+      required: [data, page, size, total]
+
+    PagedCommentResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentResponse'
+        page:
+          type: integer
+        size:
+          type: integer
+        total:
+          type: integer
+      required: [data, page, size, total]
+
+    PagedProcessingResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProcessingHistoryResponse'
+        page:
+          type: integer
+        size:
+          type: integer
+        total:
+          type: integer
+      required: [data, page, size, total]
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+        error:
+          type: string
+        message:
+          type: string
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 0
+      description: Número de página (base 0).
+    SizeParam:
+      name: size
+      in: query
+      schema:
+        type: integer
+        default: 20
+      description: Elementos por página.
+
+  responses:
+    Unauthorized:
+      description: Token ausente o inválido.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: El recurso no pertenece al usuario autenticado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Recurso no encontrado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+paths:
+
+  # ── AUTH ────────────────────────────────────────────────────────────────────
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Perfil del usuario autenticado
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Perfil propio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── PROFILES ────────────────────────────────────────────────────────────────
+
+  /profiles/{username}:
+    get:
+      tags: [Profiles]
+      summary: Ver perfil público por username
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Perfil encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /profiles/me:
+    patch:
+      tags: [Profiles]
+      summary: Editar perfil propio
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Perfil actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /profiles/{username}/posts:
+    get:
+      tags: [Profiles, Posts]
+      summary: Posts paginados de un usuario
+      parameters:
+        - name: username
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Lista paginada de posts del usuario.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedPostResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── FILTERS ─────────────────────────────────────────────────────────────────
+
+  /filters:
+    get:
+      tags: [Filters]
+      summary: Listar filtros CUDA activos
+      responses:
+        '200':
+          description: Lista de filtros disponibles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FilterResponse'
+              example:
+                - id: e68f5947-7ada-4d88-aa6f-7e5c60bbe09b
+                  name: sobel
+                  display_name: Detección de Bordes
+                  description: Resalta los bordes de la imagen usando el operador Sobel en dos direcciones
+                  icon_name: scan
+                  is_active: true
+                - id: e1989c3f-12b8-4b22-874f-bce15f08f701
+                  name: grayscale
+                  display_name: Escala de Grises
+                  description: Convierte la imagen a blanco y negro usando pesos perceptuales de luminancia RGB
+                  icon_name: contrast
+                  is_active: true
+                - id: 5ce2a9d8-de6f-4612-9a90-a1cf5dfdbf39
+                  name: laplaciano
+                  display_name: Laplaciano
+                  description: Resalta bordes y detalles finos detectando cambios bruscos de intensidad
+                  icon_name: vector-triangle
+                  is_active: true
+                - id: a9cb7518-5534-45aa-9167-9c4127c3ff4b
+                  name: media
+                  display_name: Suavizado de Media
+                  description: Suaviza la imagen promediando los píxeles vecinos en una ventana 3x3
+                  icon_name: blur_on
+                  is_active: true
+                - id: f5fe7de2-1439-42fa-ab4d-d3bc4136b000
+                  name: emboss
+                  display_name: Relieve
+                  description: Efecto artístico 3D que simula relieve usando un kernel diagonal de convolución
+                  icon_name: badge-3d
+                  is_active: true
+                - id: af31afa0-3a9f-43f3-91e1-a821311ef22c
+                  name: ups_frame
+                  display_name: Marco UPS
+                  description: "Marco institucional UPS: banda azul #123672 (superior) y dorada #F7BF1A (inferior)"
+                  icon_name: school
+                  is_active: true
+
+  # ── POSTS ───────────────────────────────────────────────────────────────────
+
+  /posts:
+    get:
+      tags: [Posts]
+      summary: Feed paginado de posts
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Feed paginado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedPostResponse'
+
+    post:
+      tags: [Posts]
+      summary: Crear post (inicia flujo GPU)
+      description: |
+        Envía la imagen al servicio CUDA, espera el procesamiento, sube el resultado
+        a Supabase Storage y persiste el post. Puede tardar hasta 60 segundos.
+
+        `original_image_url` debe ser una imagen ya subida al bucket `original-images`
+        de Supabase Storage (Flutter sube directamente con anon key antes de llamar este endpoint).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePostRequest'
+      responses:
+        '201':
+          description: Post creado con imagen procesada disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: filter_id no existe.
+          $ref: '#/components/responses/NotFound'
+
+  /posts/{id}:
+    get:
+      tags: [Posts]
+      summary: Post individual por ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Post encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Posts]
+      summary: Borrar post propio
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Post eliminado.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── LIKES ───────────────────────────────────────────────────────────────────
+
+  /posts/{postId}/likes:
+    post:
+      tags: [Likes]
+      summary: Dar like a un post
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Like registrado.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    delete:
+      tags: [Likes]
+      summary: Quitar like de un post
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Like eliminado.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /posts/{postId}/likes/me:
+    get:
+      tags: [Likes]
+      summary: Verificar si el usuario ya dio like
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Estado del like.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikedResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── COMMENTS ────────────────────────────────────────────────────────────────
+
+  /posts/{postId}/comments:
+    get:
+      tags: [Comments]
+      summary: Comentarios paginados de un post
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Lista paginada de comentarios.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedCommentResponse'
+
+    post:
+      tags: [Comments]
+      summary: Crear comentario
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Comentario creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /posts/{postId}/comments/{commentId}:
+    delete:
+      tags: [Comments]
+      summary: Borrar comentario propio
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Comentario eliminado.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── PROCESSING ──────────────────────────────────────────────────────────────
+
+  /processing/history:
+    get:
+      tags: [Processing]
+      summary: Historial paginado de procesamiento del usuario
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Historial paginado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedProcessingResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /processing/history/{id}:
+    get:
+      tags: [Processing]
+      summary: Detalle de procesamiento con métricas GPU
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Detalle con métricas GPU (null si status es pending).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessingDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+tags:
+  - name: Auth
+    description: Endpoints de autenticación.
+  - name: Profiles
+    description: Gestión de perfiles de usuario.
+  - name: Filters
+    description: Catálogo de filtros CUDA disponibles.
+  - name: Posts
+    description: Feed y creación de posts con procesamiento GPU.
+  - name: Likes
+    description: Sistema de likes por post.
+  - name: Comments
+    description: Comentarios por post.
+  - name: Processing
+    description: Historial y métricas del procesamiento GPU por usuario.
