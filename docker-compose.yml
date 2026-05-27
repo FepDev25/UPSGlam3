@@ -1,0 +1,34 @@
+services:
+
+  # ── Servicio GPU (Python + PyCUDA) ──────────────────────────────────────────
+  cuda-service:
+    build: ./gpu-service
+    ports:
+      - "8000:8000"       # accesible en localhost:8000 para pruebas
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - upsglam-net
+
+  # ── Backend Java Spring WebFlux ──────────────────────────────────────────────
+  backend:
+    build: ./backend      # requiere Dockerfile en ./backend (Persona A)
+    ports:
+      - "8080:8080"
+    env_file: .env        # carga todas las variables de .env
+    environment:
+      CUDA_SERVICE_URL: http://cuda-service:8000   # hostname interno de Docker
+    depends_on:
+      - cuda-service
+    networks:
+      - upsglam-net
+
+# ── Red interna compartida ───────────────────────────────────────────────────
+networks:
+  upsglam-net:
+    driver: bridge
