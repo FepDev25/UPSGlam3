@@ -1,0 +1,396 @@
+openapi: 3.0.3
+info:
+  title: UPSGlam — Contrato Backend ↔ CUDA Service
+  description: |
+    API del servicio GPU (FastAPI/PyCUDA) de UPSGlam 3.0.
+    Este contrato define la interfaz que consume el backend Spring WebFlux.
+
+    **Notas:**
+    - El backend llama **únicamente** a `POST /process`.
+    - `GET /health` es usado por Docker Compose para el healthcheck del contenedor.
+    - `GET /filters` y `POST /filter/{filter_name}` son endpoints auxiliares
+      del GPU service (consulta directa y pruebas locales) — el backend no los llama.
+    - La imagen procesada se devuelve como PNG codificado en base64.
+    - El campo `processing_id` se recibe pero no se usa internamente en el GPU service;
+      sirve como correlación para el backend.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local (desarrollo)
+  - url: http://cuda-service:8000
+    description: Docker Compose (red interna)
+
+components:
+
+  schemas:
+
+    # ── Request ──────────────────────────────────────────────────────────────────
+
+    ProcessRequest:
+      type: object
+      description: Payload que envía el backend para iniciar el procesamiento GPU.
+      properties:
+        image_url:
+          type: string
+          format: uri
+          description: URL pública de la imagen original en Supabase Storage.
+        filter_name:
+          type: string
+          description: |
+            Key del filtro a aplicar. Debe coincidir exactamente con uno de:
+            `laplaciano`, `sobel`, `media`, `grayscale`, `emboss`, `ups_frame`.
+        processing_id:
+          type: string
+          format: uuid
+          description: ID del registro en `processing_history`. Enviado para correlación.
+      required: [image_url, filter_name, processing_id]
+      example:
+        image_url: "https://scoxgmhyhqldkditowkb.supabase.co/storage/v1/object/public/original-images/foto.jpg"
+        filter_name: sobel
+        processing_id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+
+    # ── Response ─────────────────────────────────────────────────────────────────
+
+    CudaMetrics:
+      type: object
+      description: Métricas técnicas del kernel CUDA producidas por el GPU service.
+      properties:
+        filter_name:
+          type: string
+        image_width:
+          type: integer
+        image_height:
+          type: integer
+        block_dim_x:
+          type: integer
+          description: Dimensión X del bloque CUDA (fija en 16).
+        block_dim_y:
+          type: integer
+          description: Dimensión Y del bloque CUDA (fija en 16).
+        grid_dim_x:
+          type: integer
+          description: "Calculado como ceil(width / block_dim_x)."
+        grid_dim_y:
+          type: integer
+          description: "Calculado como ceil(height / block_dim_y)."
+        total_threads:
+          type: integer
+          description: "grid_dim_x * block_dim_x * grid_dim_y * block_dim_y."
+        kernel_time_ms:
+          type: number
+          format: double
+          description: Tiempo de ejecución del kernel medido con CUDA Events.
+        total_time_ms:
+          type: number
+          format: double
+          description: Tiempo total incluyendo transferencias de memoria host↔device.
+        memory_transferred_mb:
+          type: number
+          format: double
+          description: "Bytes RGB transferidos: width * height * 3 / 1 048 576."
+        gpu_memory_used_mb:
+          type: number
+          format: double
+          description: Memoria GPU usada en el momento de la consulta.
+        cuda_version:
+          type: string
+          nullable: true
+          description: Versión CUDA del driver. Null si no se puede consultar.
+        status:
+          type: string
+          enum: [success]
+      required:
+        - filter_name
+        - image_width
+        - image_height
+        - block_dim_x
+        - block_dim_y
+        - grid_dim_x
+        - grid_dim_y
+        - total_threads
+        - kernel_time_ms
+        - total_time_ms
+        - memory_transferred_mb
+        - gpu_memory_used_mb
+        - status
+
+    ProcessResponse:
+      type: object
+      properties:
+        processed_image_base64:
+          type: string
+          format: byte
+          description: Imagen resultante en formato PNG codificada en base64.
+        metrics:
+          $ref: '#/components/schemas/CudaMetrics'
+      required: [processed_image_base64, metrics]
+      example:
+        processed_image_base64: "iVBORw0KGgoAAAANS..."
+        metrics:
+          filter_name: sobel
+          image_width: 1080
+          image_height: 1080
+          block_dim_x: 16
+          block_dim_y: 16
+          grid_dim_x: 68
+          grid_dim_y: 68
+          total_threads: 1179648
+          kernel_time_ms: 12.4
+          total_time_ms: 45.2
+          memory_transferred_mb: 3.3
+          gpu_memory_used_mb: 128.0
+          cuda_version: "12.8"
+          status: success
+
+    KernelMetrics:
+      type: object
+      description: |
+        Métricas crudas devueltas directamente por `apply()` de cada filtro.
+        Usadas en el endpoint de prueba `POST /filter/{filter_name}`.
+        No incluye los campos adicionales que `/process` agrega vía `metrics.update()`.
+      properties:
+        kernel_time_ms:
+          type: number
+          format: double
+          description: Tiempo de ejecución del kernel medido con CUDA Events.
+        total_time_ms:
+          type: number
+          format: double
+          description: Tiempo total incluyendo transferencias de memoria host↔device.
+        block_dim_x:
+          type: integer
+          description: Dimensión X del bloque CUDA (16 en todos los filtros actuales).
+        block_dim_y:
+          type: integer
+          description: Dimensión Y del bloque CUDA (16 en todos los filtros actuales).
+        grid_dim_x:
+          type: integer
+        grid_dim_y:
+          type: integer
+        total_threads:
+          type: integer
+      required:
+        [kernel_time_ms, total_time_ms, block_dim_x, block_dim_y,
+         grid_dim_x, grid_dim_y, total_threads]
+
+    # ── Auxiliares ───────────────────────────────────────────────────────────────
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        service:
+          type: string
+          example: gpu-service
+      required: [status, service]
+
+    FilterInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        display_name:
+          type: string
+        description:
+          type: string
+      required: [name, display_name, description]
+
+    FilterListResponse:
+      type: object
+      properties:
+        filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterInfo'
+      required: [filters]
+
+    ErrorResponse:
+      type: object
+      description: Detalle de error devuelto por FastAPI.
+      properties:
+        detail:
+          type: string
+      required: [detail]
+
+paths:
+
+  # ── ENDPOINT PRINCIPAL (llamado por el backend Java) ─────────────────────────
+
+  /process:
+    post:
+      tags: [Procesamiento]
+      summary: Procesar imagen con filtro CUDA
+      description: |
+        Descarga la imagen desde `image_url`, aplica el kernel CUDA del filtro
+        indicado y devuelve la imagen resultante en PNG base64 junto con las
+        métricas de ejecución del kernel.
+
+        **Errores posibles:**
+        - `400` — `filter_name` no existe, imagen no descargable o no legible.
+        - `500` — fallo interno del kernel CUDA (incluye traceback en `detail`).
+
+        Timeouts configurados en el backend: conexión 5 s, respuesta 60 s.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProcessRequest'
+      responses:
+        '200':
+          description: Imagen procesada con métricas GPU.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessResponse'
+        '400':
+          description: Filtro desconocido, imagen no descargable o ilegible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                filtro_invalido:
+                  value:
+                    detail: "Filtro 'blur' no existe. Disponibles: ['laplaciano', 'sobel', 'media', 'grayscale', 'emboss', 'ups_frame']"
+                imagen_no_descargable:
+                  value:
+                    detail: "No se pudo descargar la imagen (HTTP 403)"
+        '500':
+          description: Error en el kernel CUDA.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ── HEALTHCHECK (usado por Docker Compose) ───────────────────────────────────
+
+  /health:
+    get:
+      tags: [Sistema]
+      summary: Estado del servicio GPU
+      description: |
+        Usado por el `healthcheck` de Docker Compose para verificar que el
+        servicio arrancó correctamente y los kernels CUDA están compilados.
+      responses:
+        '200':
+          description: Servicio operativo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  # ── AUXILIARES (no llamados por el backend) ──────────────────────────────────
+
+  /filters:
+    get:
+      tags: [Auxiliares]
+      summary: Listar filtros disponibles en el GPU service
+      description: |
+        Endpoint informativo del GPU service — **el backend no lo llama**
+        (usa su propia tabla `filters` en Supabase). Útil para verificar
+        que los filtros del GPU service y la DB están sincronizados.
+      responses:
+        '200':
+          description: Lista de filtros registrados en el GPU service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterListResponse'
+              example:
+                filters:
+                  - name: laplaciano
+                    display_name: Laplaciano
+                    description: Resalta bordes detectando cambios bruscos de intensidad
+                  - name: sobel
+                    display_name: Detección de Bordes
+                    description: Resalta bordes con el operador Sobel en dos direcciones
+                  - name: media
+                    display_name: Suavizado de Media
+                    description: Suaviza la imagen promediando píxeles vecinos en ventana 3x3
+                  - name: grayscale
+                    display_name: Escala de Grises
+                    description: Convierte la imagen a blanco y negro con pesos de luminancia
+                  - name: emboss
+                    display_name: Relieve
+                    description: Efecto artístico 3D usando kernel diagonal de convolución
+                  - name: ups_frame
+                    display_name: Marco UPS
+                    description: Marco institucional UPS azul #123672 y dorado #F7BF1A con logo
+
+  /filter/{filter_name}:
+    post:
+      tags: [Auxiliares]
+      summary: Aplicar filtro con upload directo (pruebas locales)
+      description: |
+        Endpoint de prueba — **el backend no lo llama**. Recibe la imagen
+        como `multipart/form-data`, útil para probar filtros desde Postman
+        o curl sin necesitar el backend Java.
+      parameters:
+        - name: filter_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        '200':
+          description: Imagen procesada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: completed
+                  filter:
+                    type: string
+                  image_width:
+                    type: integer
+                  image_height:
+                    type: integer
+                  image_base64:
+                    type: string
+                    format: byte
+                  metrics:
+                    $ref: '#/components/schemas/KernelMetrics'
+        '400':
+          description: Archivo vacío o formato no soportado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Filtro no existe.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Error en kernel CUDA.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+tags:
+  - name: Procesamiento
+    description: Endpoint principal llamado por el backend Java.
+  - name: Sistema
+    description: Healthcheck para Docker Compose.
+  - name: Auxiliares
+    description: Endpoints del GPU service no usados por el backend (consulta y pruebas).

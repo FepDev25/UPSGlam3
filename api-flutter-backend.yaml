@@ -1,34 +1,40 @@
 openapi: 3.0.3
 info:
-  title: UPSGlam API
+  title: UPSGlam — Contrato Flutter ↔ Backend
   description: |
-    Backend reactivo de UPSGlam 3.0 — red social de imágenes procesadas con GPU (CUDA/PyCUDA).
-    Construido con Spring WebFlux. Autenticación vía Supabase Auth (JWT ES256).
+    API REST del backend Spring WebFlux de UPSGlam 3.0.
+    Este contrato define la interfaz que consume la app móvil Flutter.
 
     **Convenciones:**
     - Todos los campos JSON usan `snake_case`.
     - Campos con valor `null` no aparecen en la respuesta.
     - El `user_id` nunca va en el body — el backend lo extrae del JWT.
     - Timestamps en ISO 8601 UTC.
+    - Paginación base-0: `?page=0&size=20`.
   version: 1.0.0
 
 servers:
   - url: http://localhost:8080/api/v1
-    description: Local
-  - url: http://cuda-service:8080/api/v1
-    description: Docker Compose
+    description: Local (desarrollo)
+  - url: http://backend:8080/api/v1
+    description: Docker Compose (red interna)
 
 security: []
 
 components:
+
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: JWT obtenido desde Supabase Auth (`access_token`).
+      description: |
+        JWT obtenido desde Supabase Auth (`access_token`).
+        Supabase usa ECC P-256 (ES256) — no RSA.
 
   schemas:
+
+    # ── Perfiles ────────────────────────────────────────────────────────────────
 
     ProfileResponse:
       type: object
@@ -73,6 +79,8 @@ components:
         full_name: Felipe
         bio: Computación Paralela UPS
 
+    # ── Filtros ─────────────────────────────────────────────────────────────────
+
     FilterResponse:
       type: object
       properties:
@@ -81,6 +89,7 @@ components:
           format: uuid
         name:
           type: string
+          description: Key interno usado en `CreatePostRequest.filter_id` (via UUID).
         display_name:
           type: string
         description:
@@ -90,6 +99,8 @@ components:
         is_active:
           type: boolean
       required: [id, name, display_name, description, icon_name, is_active]
+
+    # ── Posts ───────────────────────────────────────────────────────────────────
 
     AuthorInfo:
       type: object
@@ -105,9 +116,9 @@ components:
     PostResponse:
       type: object
       description: |
-        Representa un post publicado. `filter_id` es el UUID del filtro aplicado;
-        cruzar con `GET /filters` para obtener el nombre para mostrar.
-        `is_published` es siempre `true` en el feed (los pendientes/fallidos no aparecen).
+        Post publicado. `filter_id` es el UUID del filtro aplicado — cruzar con
+        `GET /filters` para obtener `display_name` e `icon_name`.
+        `processed_image_url` apunta a un PNG en el bucket `processed-images` de Supabase Storage.
       properties:
         id:
           type: string
@@ -146,7 +157,9 @@ components:
         original_image_url:
           type: string
           format: uri
-          description: URL pública de una imagen ya subida al bucket `original-images` de Supabase Storage.
+          description: |
+            URL pública de una imagen ya subida por Flutter al bucket `original-images`
+            de Supabase Storage (con anon key). El backend la descarga para procesarla.
         filter_id:
           type: string
           format: uuid
@@ -157,7 +170,20 @@ components:
       example:
         original_image_url: "https://scoxgmhyhqldkditowkb.supabase.co/storage/v1/object/public/original-images/foto.jpg"
         filter_id: e68f5947-7ada-4d88-aa6f-7e5c60bbe09b
-        caption: Mi primer post
+        caption: Mi primer post con CUDA
+
+    # ── Likes ───────────────────────────────────────────────────────────────────
+
+    LikedResponse:
+      type: object
+      properties:
+        liked:
+          type: boolean
+      required: [liked]
+      example:
+        liked: true
+
+    # ── Comentarios ─────────────────────────────────────────────────────────────
 
     CommentResponse:
       type: object
@@ -189,17 +215,11 @@ components:
       example:
         content: Muy buena foto!
 
-    LikedResponse:
-      type: object
-      properties:
-        liked:
-          type: boolean
-      required: [liked]
-      example:
-        liked: true
+    # ── Procesamiento GPU ────────────────────────────────────────────────────────
 
     GpuMetricsResponse:
       type: object
+      description: Métricas técnicas del kernel CUDA. Solo presente cuando status es `completed`.
       properties:
         filter_name:
           type: string
@@ -277,10 +297,13 @@ components:
           type: string
           format: date-time
         gpu_metrics:
-          $ref: '#/components/schemas/GpuMetricsResponse'
+          allOf:
+            - $ref: '#/components/schemas/GpuMetricsResponse'
           nullable: true
-          description: Null si el status es `pending`.
+          description: Null si status es `pending`.
       required: [id, filter_id, status, original_image_url, created_at]
+
+    # ── Paginación ───────────────────────────────────────────────────────────────
 
     PagedPostResponse:
       type: object
@@ -293,9 +316,9 @@ components:
           type: integer
         size:
           type: integer
-        total:
-          type: integer
-      required: [data, page, size, total]
+        has_next:
+          type: boolean
+      required: [data, page, size, has_next]
 
     PagedCommentResponse:
       type: object
@@ -308,9 +331,9 @@ components:
           type: integer
         size:
           type: integer
-        total:
-          type: integer
-      required: [data, page, size, total]
+        has_next:
+          type: boolean
+      required: [data, page, size, has_next]
 
     PagedProcessingResponse:
       type: object
@@ -323,9 +346,11 @@ components:
           type: integer
         size:
           type: integer
-        total:
-          type: integer
-      required: [data, page, size, total]
+        has_next:
+          type: boolean
+      required: [data, page, size, has_next]
+
+    # ── Errores ──────────────────────────────────────────────────────────────────
 
     ErrorResponse:
       type: object
@@ -372,10 +397,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Conflicto con el estado actual del recurso.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
 
 paths:
 
-  # ── AUTH ────────────────────────────────────────────────────────────────────
+  # ── AUTH ─────────────────────────────────────────────────────────────────────
 
   /auth/me:
     get:
@@ -393,7 +424,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  # ── PROFILES ────────────────────────────────────────────────────────────────
+  # ── PROFILES ─────────────────────────────────────────────────────────────────
 
   /profiles/{username}:
     get:
@@ -439,7 +470,7 @@ paths:
 
   /profiles/{username}/posts:
     get:
-      tags: [Profiles, Posts]
+      tags: [Profiles]
       summary: Posts paginados de un usuario
       parameters:
         - name: username
@@ -459,7 +490,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  # ── FILTERS ─────────────────────────────────────────────────────────────────
+  # ── FILTERS ──────────────────────────────────────────────────────────────────
 
   /filters:
     get:
@@ -467,7 +498,7 @@ paths:
       summary: Listar filtros CUDA activos
       responses:
         '200':
-          description: Lista de filtros disponibles.
+          description: Array de filtros disponibles.
           content:
             application/json:
               schema:
@@ -481,12 +512,6 @@ paths:
                   description: Resalta los bordes de la imagen usando el operador Sobel en dos direcciones
                   icon_name: scan
                   is_active: true
-                - id: e1989c3f-12b8-4b22-874f-bce15f08f701
-                  name: grayscale
-                  display_name: Escala de Grises
-                  description: Convierte la imagen a blanco y negro usando pesos perceptuales de luminancia RGB
-                  icon_name: contrast
-                  is_active: true
                 - id: 5ce2a9d8-de6f-4612-9a90-a1cf5dfdbf39
                   name: laplaciano
                   display_name: Laplaciano
@@ -499,6 +524,12 @@ paths:
                   description: Suaviza la imagen promediando los píxeles vecinos en una ventana 3x3
                   icon_name: blur_on
                   is_active: true
+                - id: e1989c3f-12b8-4b22-874f-bce15f08f701
+                  name: grayscale
+                  display_name: Escala de Grises
+                  description: Convierte la imagen a blanco y negro usando pesos perceptuales de luminancia RGB
+                  icon_name: contrast
+                  is_active: true
                 - id: f5fe7de2-1439-42fa-ab4d-d3bc4136b000
                   name: emboss
                   display_name: Relieve
@@ -508,11 +539,11 @@ paths:
                 - id: af31afa0-3a9f-43f3-91e1-a821311ef22c
                   name: ups_frame
                   display_name: Marco UPS
-                  description: "Marco institucional UPS: banda azul #123672 (superior) y dorada #F7BF1A (inferior)"
+                  description: "Marco institucional UPS: banda azul #123672 y dorada #F7BF1A con logo"
                   icon_name: school
                   is_active: true
 
-  # ── POSTS ───────────────────────────────────────────────────────────────────
+  # ── POSTS ────────────────────────────────────────────────────────────────────
 
   /posts:
     get:
@@ -531,13 +562,12 @@ paths:
 
     post:
       tags: [Posts]
-      summary: Crear post (inicia flujo GPU)
+      summary: Crear post con procesamiento GPU
       description: |
-        Envía la imagen al servicio CUDA, espera el procesamiento, sube el resultado
-        a Supabase Storage y persiste el post. Puede tardar hasta 60 segundos.
-
-        `original_image_url` debe ser una imagen ya subida al bucket `original-images`
-        de Supabase Storage (Flutter sube directamente con anon key antes de llamar este endpoint).
+        Flujo completo: descarga la imagen original → envía al servicio CUDA →
+        sube la imagen procesada (PNG) a Supabase Storage → persiste el post.
+        Puede tardar hasta 60 segundos. Flutter debe subir primero la imagen
+        original al bucket `original-images` con su anon key y luego enviar la URL aquí.
       security:
         - BearerAuth: []
       requestBody:
@@ -553,6 +583,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostResponse'
+        '400':
+          description: Parámetros inválidos o error en procesamiento GPU.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -602,7 +638,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  # ── LIKES ───────────────────────────────────────────────────────────────────
+  # ── LIKES ────────────────────────────────────────────────────────────────────
 
   /posts/{postId}/likes:
     post:
@@ -622,6 +658,12 @@ paths:
           description: Like registrado.
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Post no encontrado.
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: El usuario ya dio like a este post.
+          $ref: '#/components/responses/Conflict'
 
     delete:
       tags: [Likes]
@@ -640,11 +682,14 @@ paths:
           description: Like eliminado.
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: El usuario no había dado like a este post.
+          $ref: '#/components/responses/NotFound'
 
   /posts/{postId}/likes/me:
     get:
       tags: [Likes]
-      summary: Verificar si el usuario ya dio like
+      summary: ¿El usuario ya dio like a este post?
       security:
         - BearerAuth: []
       parameters:
@@ -664,7 +709,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  # ── COMMENTS ────────────────────────────────────────────────────────────────
+  # ── COMMENTS ─────────────────────────────────────────────────────────────────
 
   /posts/{postId}/comments:
     get:
@@ -689,7 +734,7 @@ paths:
 
     post:
       tags: [Comments]
-      summary: Crear comentario
+      summary: Crear comentario en un post
       security:
         - BearerAuth: []
       parameters:
@@ -714,11 +759,17 @@ paths:
                 $ref: '#/components/schemas/CommentResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Post no encontrado.
+          $ref: '#/components/responses/NotFound'
 
   /posts/{postId}/comments/{commentId}:
     delete:
       tags: [Comments]
       summary: Borrar comentario propio
+      description: |
+        Retorna 404 tanto si el comentario no existe como si existe pero no pertenece
+        al usuario autenticado (el backend no distingue ambos casos).
       security:
         - BearerAuth: []
       parameters:
@@ -739,10 +790,11 @@ paths:
           description: Comentario eliminado.
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Comentario no encontrado o no pertenece al usuario.
+          $ref: '#/components/responses/NotFound'
 
-  # ── PROCESSING ──────────────────────────────────────────────────────────────
+  # ── PROCESSING ───────────────────────────────────────────────────────────────
 
   /processing/history:
     get:
@@ -778,7 +830,7 @@ paths:
             format: uuid
       responses:
         '200':
-          description: Detalle con métricas GPU (null si status es pending).
+          description: Detalle con métricas GPU (null si status es `pending`).
           content:
             application/json:
               schema:
@@ -790,9 +842,9 @@ paths:
 
 tags:
   - name: Auth
-    description: Endpoints de autenticación.
+    description: Perfil del usuario autenticado vía JWT.
   - name: Profiles
-    description: Gestión de perfiles de usuario.
+    description: Perfiles de usuario (público y propio).
   - name: Filters
     description: Catálogo de filtros CUDA disponibles.
   - name: Posts
