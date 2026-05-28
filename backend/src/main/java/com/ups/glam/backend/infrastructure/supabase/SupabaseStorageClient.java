@@ -28,11 +28,11 @@ public class SupabaseStorageClient {
     }
 
     public Mono<String> uploadProcessedImage(UUID userId, UUID processingId, byte[] imageBytes) {
-        String path = userId + "/" + processingId + ".jpg";
+        String path = userId + "/" + processingId + ".png";
 
         return webClient.post()
             .uri("/object/" + PROCESSED_BUCKET + "/" + path)
-            .contentType(MediaType.IMAGE_JPEG)
+            .contentType(MediaType.IMAGE_PNG)
             .bodyValue(imageBytes)
             .retrieve()
             .onStatus(
