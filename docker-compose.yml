@@ -1,10 +1,10 @@
 services:
 
-  # ── Servicio GPU (Python + PyCUDA) ──────────────────────────────────────────
+  # Servicio de inferencia con GPU (Python + FastAPI)
   cuda-service:
     build: ./gpu-service
     ports:
-      - "8000:8000"       # accesible en localhost:8000 para pruebas
+      - "8000:8000"       # esta exponiendo el puerto 8000 para FastAPI
     deploy:
       resources:
         reservations:
@@ -15,9 +15,9 @@ services:
     networks:
       - upsglam-net
 
-  # ── Backend Java Spring WebFlux ──────────────────────────────────────────────
+  # Backend principal (Java + Spring Boot)
   backend:
-    build: ./backend      # requiere Dockerfile en ./backend (Persona A)
+    build: ./backend      # requiere Dockerfile en ./backend 
     ports:
       - "8080:8080"
     env_file: .env        # carga todas las variables de .env
@@ -28,7 +28,7 @@ services:
     networks:
       - upsglam-net
 
-# ── Red interna compartida ───────────────────────────────────────────────────
+# es la red interna para que los servicios se comuniquen entre sí
 networks:
   upsglam-net:
     driver: bridge
