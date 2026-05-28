@@ -53,7 +53,7 @@ def _numpy_to_base64(arr: np.ndarray) -> str:
 
 
 async def _download_image(url: str) -> bytes:
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         response = await client.get(url)
         if response.status_code != 200:
             raise HTTPException(
