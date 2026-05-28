@@ -12,19 +12,26 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - upsglam-net
 
   # Backend principal (Java + Spring Boot)
   backend:
-    build: ./backend      # requiere Dockerfile en ./backend 
+    build: ./backend
     ports:
       - "8080:8080"
     env_file: .env        # carga todas las variables de .env
     environment:
       CUDA_SERVICE_URL: http://cuda-service:8000   # hostname interno de Docker
     depends_on:
-      - cuda-service
+      cuda-service:
+        condition: service_healthy
     networks:
       - upsglam-net
 
