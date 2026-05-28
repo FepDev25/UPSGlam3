@@ -64,9 +64,6 @@ public class GpuMetrics {
     @Column("cuda_version")
     private String cudaVersion;
 
-    @Column("compute_capability")
-    private String computeCapability;
-
     @Column("status")
     private String status;
 
