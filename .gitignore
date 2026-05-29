@@ -39,6 +39,15 @@ build/
 *.env
 mobile/.env
 
+### Resultados de pruebas locales ###
+gpu-service/resultado_*.json
+
+### Python ###
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+
 ### Apuntes personales ###
 INDICACIONES_PROYECTO.md
 Logo_Universidad.png
