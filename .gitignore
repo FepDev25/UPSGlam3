@@ -40,9 +40,7 @@ build/
 mobile/.env
 
 ### Apuntes personales ###
-APUNTES_PERSONALES.md
 INDICACIONES_PROYECTO.md
-PersonaB.png
 Logo_Universidad.png
 application-local.yml
 COMANDOS.md
