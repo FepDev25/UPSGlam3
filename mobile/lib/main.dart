@@ -132,10 +132,11 @@ class _AuthPageState extends State<AuthPage> {
         _message = 'Error inesperado: $error';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -282,10 +283,11 @@ class _HomePageState extends State<HomePage> {
         _error = 'No se pudieron cargar los filtros: $error';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -349,7 +351,7 @@ class _HomePageState extends State<HomePage> {
         Expanded(
           child: ListView.separated(
             itemCount: _filters.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
               final filter = _filters[index];
 
