@@ -33,7 +33,11 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Environment files
 .env
+*.env
+mobile/.env
 
 ### Apuntes personales ###
 APUNTES_PERSONALES.md
